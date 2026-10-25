@@ -83,13 +83,13 @@ jobs:
       - name: Check out framework scripts
         uses: actions/checkout@v4
         with:
-          repository: nsripriya731/mulesoft-github-actions
+          repository: Mule-GHA-PoC/mulesoft-github-actions
           ref: main
           path: framework
           persist-credentials: false
 
       - name: Set up Java and Maven
-        uses: nsripriya731/mulesoft-github-actions/.github/actions/setup-mule-build@main
+        uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup-mule-build@main
 
       - name: Validate deployment configuration
         run: bash framework/scripts/validate-config.sh deploy

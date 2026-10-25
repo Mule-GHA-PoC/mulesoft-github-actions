@@ -2,8 +2,8 @@
 
 ## Components
 
-- **Framework repository** (`nsripriya731/mulesoft-github-actions`): reusable workflows, scripts, docs.
-- **Application repository** (for example `nsripriya731/mulesoft-github-actions-ci-smoke-test`): Mule
+- **Framework repository** (`Mule-GHA-PoC/mulesoft-github-actions`): reusable workflows, scripts, docs.
+- **Application repository** (for example `Mule-GHA-PoC/mulesoft-github-actions-ci-smoke-test`): Mule
   project plus a thin caller workflow that passes flags and secrets to the framework.
 
 ## Job graph (`reusable-mule-ci.yml`)

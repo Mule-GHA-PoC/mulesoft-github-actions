@@ -105,5 +105,5 @@ should have required reviewers. Add environment variables and secrets there. Thi
 create or populate them, and the test in this project never runs `mule-cd.yml`.
 
 ```bash
-gh api --method PUT "repos/nsripriya731/mulesoft-github-actions/environments/prod"
+gh api --method PUT "repos/Mule-GHA-PoC/mulesoft-github-actions/environments/prod"
 ```

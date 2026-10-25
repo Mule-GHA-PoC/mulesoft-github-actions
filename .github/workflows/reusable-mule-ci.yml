@@ -66,7 +66,7 @@ jobs:
       - name: Check out framework scripts
         uses: actions/checkout@v4
         with:
-          repository: nsripriya731/mulesoft-github-actions
+          repository: Mule-GHA-PoC/mulesoft-github-actions
           ref: main
           path: framework
           persist-credentials: false
@@ -128,7 +128,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Java and Maven
-        uses: nsripriya731/mulesoft-github-actions/.github/actions/setup-mule-build@main
+        uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup-mule-build@main
         with:
           java_version: ${{ inputs.java_version }}
 
@@ -165,7 +165,7 @@ jobs:
       - name: Check out framework scripts
         uses: actions/checkout@v4
         with:
-          repository: nsripriya731/mulesoft-github-actions
+          repository: Mule-GHA-PoC/mulesoft-github-actions
           ref: main
           path: framework
           persist-credentials: false
@@ -206,13 +206,13 @@ jobs:
       - name: Check out framework scripts
         uses: actions/checkout@v4
         with:
-          repository: nsripriya731/mulesoft-github-actions
+          repository: Mule-GHA-PoC/mulesoft-github-actions
           ref: main
           path: framework
           persist-credentials: false
 
       - name: Set up Java and Maven
-        uses: nsripriya731/mulesoft-github-actions/.github/actions/setup-mule-build@main
+        uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup-mule-build@main
         with:
           java_version: ${{ inputs.java_version }}
 
@@ -276,13 +276,13 @@ jobs:
       - name: Check out framework scripts
         uses: actions/checkout@v4
         with:
-          repository: nsripriya731/mulesoft-github-actions
+          repository: Mule-GHA-PoC/mulesoft-github-actions
           ref: main
           path: framework
           persist-credentials: false
 
       - name: Set up Java and Maven
-        uses: nsripriya731/mulesoft-github-actions/.github/actions/setup-mule-build@main
+        uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup-mule-build@main
         with:
           java_version: ${{ inputs.java_version }}
 
@@ -344,7 +344,7 @@ jobs:
     name: "6 Deploy and verify"
     if: ${{ inputs.deploy }}
     needs: [version, publish]
-    uses: nsripriya731/mulesoft-github-actions/.github/workflows/reusable-mule-deploy.yml@main
+    uses: Mule-GHA-PoC/mulesoft-github-actions/.github/workflows/reusable-mule-deploy.yml@main
     with:
       environment: ${{ inputs.deploy_environment }}
       artifact_id: ${{ needs.version.outputs.artifact_id }}

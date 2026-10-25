@@ -32,6 +32,6 @@ manual, approval-gated promotion workflow for higher environments.
 
 ## Reusing the framework
 
-Callers reference `nsripriya731/mulesoft-github-actions/.github/workflows/reusable-mule-ci.yml@main`.
+Callers reference `Mule-GHA-PoC/mulesoft-github-actions/.github/workflows/reusable-mule-ci.yml@main`.
 Note that `uses:` cannot contain expressions, and the framework checks itself out at `ref: main`
 inside the workflow files. To pin a release, change those refs to a tag in both reusable workflows.
