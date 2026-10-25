@@ -43,8 +43,10 @@ jobs:
     if: ${{ github.event_name != 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup@main
-      - run: mvn -B -ntp test
+      - name: Setup
+        uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup@main
+      - name: Unit test
+        run: mvn -B -ntp test
 
   package:
     name: Package
@@ -55,9 +57,12 @@ jobs:
       artifact_id: ${{ steps.project.outputs.artifact_id }}
       version: ${{ steps.project.outputs.version }}
     steps:
-      - uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup@main
-      - run: mvn -B -ntp package -DskipTests
-      - id: project
+      - name: Setup
+        uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup@main
+      - name: Package
+        run: mvn -B -ntp package -DskipTests
+      - name: Read project coordinates
+        id: project
         run: |
           echo "version=$(mvn -q -ntp help:evaluate -Dexpression=project.version -DforceStdout)" >> "$GITHUB_OUTPUT"
           echo "artifact_id=$(mvn -q -ntp help:evaluate -Dexpression=project.artifactId -DforceStdout)" >> "$GITHUB_OUTPUT"
@@ -71,8 +76,10 @@ jobs:
       ANYPOINT_USERNAME: ${{ secrets.ANYPOINT_USERNAME }}
       ANYPOINT_PASSWORD: ${{ secrets.ANYPOINT_PASSWORD }}
     steps:
-      - uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup@main
-      - run: mvn -B -ntp deploy -DskipTests
+      - name: Setup
+        uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup@main
+      - name: Publish to Exchange
+        run: mvn -B -ntp deploy -DskipTests
 
   deploy:
     name: Deploy ${{ inputs.environment || 'Sandbox' }}
@@ -99,11 +106,13 @@ jobs:
       ARTIFACT_ID: ${{ inputs.artifact_id || needs.package.outputs.artifact_id }}
       VERSION: ${{ inputs.version || needs.package.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out deploy script
+        uses: actions/checkout@v4
         with:
           repository: Mule-GHA-PoC/mulesoft-github-actions
           path: framework
-      - run: bash framework/scripts/deploy.sh
+      - name: Deploy to CloudHub 2.0
+        run: bash framework/scripts/deploy.sh
 
   release:
     name: Release
@@ -116,7 +125,8 @@ jobs:
       ANYPOINT_USERNAME: ${{ secrets.ANYPOINT_USERNAME }}
       ANYPOINT_PASSWORD: ${{ secrets.ANYPOINT_PASSWORD }}
     steps:
-      - uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup@main
+      - name: Setup
+        uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup@main
         with:
           fetch-depth: 0
 
@@ -136,5 +146,5 @@ jobs:
         run: |
           git fetch origin develop
           git checkout develop
-          git merge --no-ff origin/main -m "Merge main into develop after release"
+          git merge --no-ff main -m "Merge main into develop after release"
           git push origin develop
