@@ -1,0 +1,124 @@
+name: Mule pipeline
+
+# One reusable workflow for every trigger. The caller's event decides which stages run, like
+# skipped stages in Jenkins:
+#
+#   pull_request       build: unit tests, package
+#   push to develop    build: unit tests, package, publish X.Y.Z-dev.<run> to Exchange; deploy to Sandbox
+#   push to main       build: unit tests, package, publish release X.Y.Z to Exchange; no deploy
+#   workflow_dispatch  deploy only: an already published version to the chosen environment (CD)
+#
+# Config (org or repo level): variables ANYPOINT_ORG_ID, ANYPOINT_ENVIRONMENT,
+# ANYPOINT_DEPLOYMENT_TARGET, MULE_RUNTIME_VERSION and secrets ANYPOINT_USERNAME, ANYPOINT_PASSWORD.
+# Optional variables: ANYPOINT_BASE_URI, MULE_APPLICATION_NAME, MULE_RELEASE_CHANNEL,
+# MULE_JAVA_VERSION, MULE_VCORES, MULE_REPLICAS. Per-environment values go in GitHub Environments.
+
+on:
+  workflow_call:
+    inputs:
+      artifact_id:
+        description: CD only - Mule application artifactId
+        type: string
+        default: ''
+      version:
+        description: CD only - published Exchange version to deploy
+        type: string
+        default: ''
+      environment:
+        description: CD only - GitHub Environment to deploy to
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: ${{ github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    outputs:
+      artifact_id: ${{ steps.project.outputs.artifact_id }}
+      version: ${{ steps.project.outputs.version }}
+    env:
+      ANYPOINT_USERNAME: ${{ secrets.ANYPOINT_USERNAME }}
+      ANYPOINT_PASSWORD: ${{ secrets.ANYPOINT_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # server-id must match the repository ids in the POM; credentials are read from the env above.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+          server-id: anypoint-exchange-v3
+          server-username: ANYPOINT_USERNAME
+          server-password: ANYPOINT_PASSWORD
+
+      # The Mule Maven Plugin needs a specific Maven release; the runner's bundled one breaks it.
+      - name: Install Maven 3.9.16
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/maven.tgz" https://archive.apache.org/dist/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz
+          echo "831a8591fe20c8243b1dbe7d71e3244f31d1665b0804b2e825e38cbbe5ce0cafb8338851f90780735568773e0a6cd07bbec107cda0b896b008b861075358b6f6  $RUNNER_TEMP/maven.tgz" | sha512sum --check --status
+          tar -xzf "$RUNNER_TEMP/maven.tgz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/apache-maven-3.9.16/bin" >> "$GITHUB_PATH"
+
+      # develop -> X.Y.Z-dev.<run number>; main -> X.Y.Z exactly as in the POM (a release; Exchange
+      # versions are immutable, so bump the POM version before merging to main).
+      - name: Set version
+        id: project
+        run: |
+          base=$(mvn -q -ntp help:evaluate -Dexpression=project.version -DforceStdout | sed 's/-SNAPSHOT$//')
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]; then
+            version="$base"
+          else
+            version="${base}-dev.${GITHUB_RUN_NUMBER}"
+          fi
+          mvn -q -ntp versions:set -DnewVersion="$version" -DgenerateBackupPoms=false
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "artifact_id=$(mvn -q -ntp help:evaluate -Dexpression=project.artifactId -DforceStdout)" >> "$GITHUB_OUTPUT"
+          echo "Version: $version"
+
+      - name: Unit tests
+        run: mvn -B -ntp test
+
+      - name: Package
+        run: mvn -B -ntp package -DskipTests
+
+      - name: Publish to Exchange
+        if: ${{ github.event_name == 'push' }}
+        run: mvn -B -ntp deploy -DskipTests
+
+  deploy:
+    needs: build
+    if: >-
+      ${{ !cancelled() && (github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && github.ref == 'refs/heads/develop' && needs.build.result == 'success')) }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment || 'Sandbox' }}
+    concurrency:
+      group: mule-deploy-${{ github.repository }}-${{ inputs.environment || 'Sandbox' }}
+      cancel-in-progress: false
+    env:
+      ANYPOINT_BASE_URI: ${{ vars.ANYPOINT_BASE_URI }}
+      ANYPOINT_ORG_ID: ${{ vars.ANYPOINT_ORG_ID }}
+      ANYPOINT_ENVIRONMENT: ${{ vars.ANYPOINT_ENVIRONMENT }}
+      ANYPOINT_DEPLOYMENT_TARGET: ${{ vars.ANYPOINT_DEPLOYMENT_TARGET }}
+      MULE_RUNTIME_VERSION: ${{ vars.MULE_RUNTIME_VERSION }}
+      MULE_RELEASE_CHANNEL: ${{ vars.MULE_RELEASE_CHANNEL }}
+      MULE_JAVA_VERSION: ${{ vars.MULE_JAVA_VERSION }}
+      MULE_VCORES: ${{ vars.MULE_VCORES }}
+      MULE_REPLICAS: ${{ vars.MULE_REPLICAS }}
+      MULE_APPLICATION_NAME: ${{ vars.MULE_APPLICATION_NAME }}
+      ANYPOINT_USERNAME: ${{ secrets.ANYPOINT_USERNAME }}
+      ANYPOINT_PASSWORD: ${{ secrets.ANYPOINT_PASSWORD }}
+      ARTIFACT_ID: ${{ inputs.artifact_id || needs.build.outputs.artifact_id }}
+      VERSION: ${{ inputs.version || needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Mule-GHA-PoC/mulesoft-github-actions
+          path: framework
+
+      - name: Deploy to CloudHub 2.0
+        run: bash framework/scripts/deploy.sh

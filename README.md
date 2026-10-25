@@ -1,37 +1,70 @@
-# mulesoft-github-actions
+# MuleSoft GitHub Actions framework
 
-Reusable GitHub Actions CI/CD for MuleSoft Mule 4 applications: validation, MUnit tests, packaging,
-GitHub Actions artifacts, Anypoint Exchange publication, Sandbox auto-deploy on `develop`, and a
-manual, approval-gated promotion workflow for higher environments.
+One reusable workflow, `.github/workflows/mule-pipeline.yml`, builds, publishes and deploys Mule 4
+applications. The caller's event decides which stages run:
 
-- Architecture, versioning and job graph: [docs/architecture.md](docs/architecture.md)
-- Setup (GitHub CLI, Java, Maven, Anypoint, GitHub variables and secrets): [docs/setup.md](docs/setup.md)
-- End-to-end test evidence: [docs/test-report.md](docs/test-report.md)
+| Trigger | Unit tests | Package | Publish to Exchange | Deploy |
+|---|---|---|---|---|
+| Pull request | yes | yes | - | - |
+| Merge to `develop` | yes | yes | `X.Y.Z-dev.<run number>` | Sandbox (automatic) |
+| Merge to `main` | yes | yes | `X.Y.Z` (release) | - |
+| Manual run (CD) | - | - | - | chosen environment, from Exchange |
 
-## What is in this repository
+## Versions
 
-| Path | Purpose |
-| --- | --- |
-| `.github/workflows/reusable-mule-ci.yml` | Reusable pipeline: validate → test → version → package → publish → deploy |
-| `.github/workflows/reusable-mule-deploy.yml` | Reusable deploy-only job: exact Exchange artifact → SHA-256 check → `mule:deploy` → Runtime Manager check |
-| `.github/workflows/mule-cd.yml` | Manual (`workflow_dispatch`) promotion to `qa`, `uat` or `prod` |
-| `scripts/validate-config.sh` | Fails fast on missing or invalid variables/secrets |
-| `scripts/calculate-version.sh` | Deterministic version: `X.Y.Z` for release tags, `X.Y.Z-dev.<run_id>` otherwise |
-| `scripts/write-maven-settings.sh` | Writes Maven `settings.xml` referencing env vars (no secret values on disk) |
-| `scripts/exchange.sh` | Exchange Maven Facade reads: existence check and exact-artifact download |
-| `scripts/verify-artifact.sh` | Confirms a JAR is a real Mule application; writes SHA-256 and `build-metadata.json` |
-| `scripts/write-deploy-pom.sh` | Generates the deploy-only POM for CloudHub 2.0 |
-| `scripts/verify-deployment.sh` | Polls Runtime Manager until the application is running |
+The base version is the POM `<version>` without `-SNAPSHOT`.
 
-## Onboarding a Mule application
+- `develop`: `<base>-dev.<GitHub run number>`, for example `1.0.0-dev.57`. Unique per run.
+- `main`: `<base>` exactly. Exchange versions are immutable, so bump the POM version before merging
+  to `main`; publishing an existing version fails.
 
-1. Make the app a Mule 4 Maven project whose `pom.xml` `groupId` is the Anypoint organization ID and whose
-   `packaging` is `mule-application` (see the smoke-test repository for a working POM).
-2. Add a caller workflow (the smoke-test repository has one, `.github/workflows/ci.yml`).
-3. Configure the variables and secrets in [docs/setup.md](docs/setup.md) for that repository.
+The version is set in the build only (`versions:set`); the POM in the repository is not changed.
 
-## Reusing the framework
+## Use it in an application repository
 
-Callers reference `Mule-GHA-PoC/mulesoft-github-actions/.github/workflows/reusable-mule-ci.yml@main`.
-Note that `uses:` cannot contain expressions, and the framework checks itself out at `ref: main`
-inside the workflow files. To pin a release, change those refs to a tag in both reusable workflows.
+Copy `pipeline.yml` from the sample app (`mulesoft-github-actions-ci-smoke-test`). It calls this
+workflow with `secrets: inherit`. The POM needs the Exchange repository and the same id in
+`distributionManagement`, so one credential entry covers resolve and publish:
+
+```xml
+<repositories>
+  <repository>
+    <id>anypoint-exchange-v3</id>
+    <url>https://maven.anypoint.mulesoft.com/api/v3/maven</url>
+  </repository>
+</repositories>
+<distributionManagement>
+  <repository>
+    <id>anypoint-exchange-v3</id>
+    <url>https://maven.anypoint.mulesoft.com/api/v3/organizations/${anypoint.org.id}/maven</url>
+  </repository>
+</distributionManagement>
+```
+
+The POM `groupId` must be the Anypoint organization ID.
+
+## Configuration (set once at the GitHub organization)
+
+```bash
+gh secret set ANYPOINT_USERNAME --org <org> --visibility all
+gh secret set ANYPOINT_PASSWORD --org <org> --visibility all
+gh variable set ANYPOINT_ORG_ID --org <org> --visibility all --body "<root organization id>"
+gh variable set ANYPOINT_ENVIRONMENT --org <org> --visibility all --body "Sandbox"
+gh variable set ANYPOINT_DEPLOYMENT_TARGET --org <org> --visibility all --body "<target id>"
+gh variable set MULE_RUNTIME_VERSION --org <org> --visibility all --body "4.13.0"
+```
+
+Optional variables: `ANYPOINT_BASE_URI`, `MULE_APPLICATION_NAME` (default: artifactId),
+`MULE_RELEASE_CHANNEL` (`EDGE`), `MULE_JAVA_VERSION` (`17`), `MULE_VCORES` (`0.1`), `MULE_REPLICAS` (`1`).
+
+Target ids come from `GET /runtimefabric/api/organizations/<org>/targets` (for a shared space, for
+example `cloudhub-us-east-2`). For `qa`, `uat` and `prod`, create a GitHub Environment of that name
+in the application repository and set `ANYPOINT_ENVIRONMENT`, `ANYPOINT_DEPLOYMENT_TARGET` (and
+credentials if they differ) there; environment values override organization ones, and the
+environment's protection rules gate the deployment.
+
+## Deploying
+
+`scripts/deploy.sh` calls the Runtime Manager API: it creates the deployment, or updates the one with
+the same application name, pointing it at the published Exchange asset, then waits until Runtime
+Manager reports that version as running. Manual deployments use the same script.
