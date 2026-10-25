@@ -10,5 +10,10 @@
       <username>${env.ANYPOINT_USERNAME}</username>
       <password>${env.ANYPOINT_PASSWORD}</password>
     </server>
+    <server>
+      <id>anypoint-exchange-v3</id>
+      <username>${env.ANYPOINT_USERNAME}</username>
+      <password>${env.ANYPOINT_PASSWORD}</password>
+    </server>
   </servers>
 </settings>
