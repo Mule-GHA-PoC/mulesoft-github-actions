@@ -11,6 +11,18 @@
   <artifactId>${app.artifact.id}</artifactId>
   <version>${app.version}</version>
   <packaging>mule-application</packaging>
+  <repositories>
+    <repository>
+      <id>mulesoft-releases</id>
+      <url>https://repository.mulesoft.org/releases/</url>
+    </repository>
+  </repositories>
+  <pluginRepositories>
+    <pluginRepository>
+      <id>mulesoft-releases</id>
+      <url>https://repository.mulesoft.org/releases/</url>
+    </pluginRepository>
+  </pluginRepositories>
   <build>
     <plugins>
       <plugin>
