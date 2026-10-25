@@ -1,0 +1,368 @@
+name: Reusable Mule CI
+
+# Reusable CI pipeline for one Mule 4 application repository.
+#
+# Job order (each job `needs` the previous one, so a failure blocks everything after it):
+#   1 validate -> 2 test -> 3 version -> 4 package -> 5 publish -> 6 deploy -> 7 verify (inside deploy)
+#
+# publish and deploy run only when the caller sets them to true. Pull request callers must
+# leave both false and pass no secrets, so PR code can never reach Anypoint.
+#
+# Caller contract (see README.md for an example):
+#   with:  publish, deploy, deploy_environment, project_path
+#   secrets: inherit   (only from trusted push events; never from pull requests)
+
+on:
+  workflow_call:
+    inputs:
+      project_path:
+        description: Directory that contains the Mule project pom.xml
+        type: string
+        default: "."
+      java_version:
+        description: Java version used to build (Mule 4.10 supports 17)
+        type: string
+        default: "17"
+      publish:
+        description: Publish the packaged application to Anypoint Exchange
+        type: boolean
+        default: false
+      deploy:
+        description: Deploy the published artifact (requires publish)
+        type: boolean
+        default: false
+      deploy_environment:
+        description: GitHub Environment in the calling repository for the deployment
+        type: string
+        default: Sandbox
+    secrets:
+      ANYPOINT_USERNAME:
+        required: false
+      ANYPOINT_PASSWORD:
+        required: false
+      ANYPOINT_CLIENT_ID:
+        required: false
+      ANYPOINT_CLIENT_SECRET:
+        required: false
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: ${{ inputs.project_path }}
+
+jobs:
+  validate:
+    name: "1 Validate configuration"
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      ANYPOINT_BASE_URI: ${{ vars.ANYPOINT_BASE_URI || 'https://anypoint.mulesoft.com' }}
+      ANYPOINT_ORG_ID: ${{ vars.ANYPOINT_ORG_ID }}
+      ANYPOINT_USERNAME: ${{ secrets.ANYPOINT_USERNAME }}
+      ANYPOINT_PASSWORD: ${{ secrets.ANYPOINT_PASSWORD }}
+      ANYPOINT_CLIENT_ID: ${{ secrets.ANYPOINT_CLIENT_ID }}
+      ANYPOINT_CLIENT_SECRET: ${{ secrets.ANYPOINT_CLIENT_SECRET }}
+    steps:
+      - name: Check out application
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check out framework scripts
+        uses: actions/checkout@v4
+        with:
+          repository: nsripriya731/mulesoft-github-actions
+          ref: main
+          path: framework
+          persist-credentials: false
+
+      - name: Reject inconsistent inputs
+        run: |
+          if [[ "${{ inputs.deploy }}" == "true" && "${{ inputs.publish }}" != "true" ]]; then
+            echo "::error::deploy requires publish: a deployment must use a published Exchange artifact." >&2
+            exit 1
+          fi
+
+      - name: Validate project structure
+        run: |
+          set -euo pipefail
+          for path in pom.xml mule-artifact.json src/main/mule; do
+            if [[ ! -e "$path" ]]; then
+              echo "::error::Missing ${path} in ${{ inputs.project_path }}" >&2
+              exit 1
+            fi
+          done
+          if [[ "${{ inputs.publish }}" == "true" || "${{ inputs.deploy }}" == "true" ]]; then
+            mode=publish
+          else
+            mode=ci
+          fi
+          if [[ "${{ inputs.deploy }}" == "true" ]]; then
+            mode=deploy
+          fi
+          bash "${GITHUB_WORKSPACE}/framework/scripts/validate-config.sh" "$mode"
+
+      - name: Validate POM and descriptor
+        run: |
+          python3 -I - <<'PY'
+          import json, sys, xml.etree.ElementTree as ET
+          ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+          pom = ET.parse("pom.xml").getroot()
+          packaging = pom.find("m:packaging", ns)
+          if packaging is None or packaging.text != "mule-application":
+              sys.exit("pom.xml packaging must be mule-application")
+          plugins = [p for p in pom.iter("{%s}plugin" % ns["m"]) if p.findtext("m:artifactId", namespaces=ns) == "mule-maven-plugin"]
+          if not plugins:
+              sys.exit("pom.xml must declare mule-maven-plugin")
+          with open("mule-artifact.json", encoding="utf-8") as handle:
+              descriptor = json.load(handle)
+          if "minMuleVersion" not in descriptor:
+              sys.exit("mule-artifact.json must declare minMuleVersion")
+          print("POM and mule-artifact.json are valid")
+          PY
+
+  test:
+    name: "2 Unit tests (MUnit)"
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out application
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java_version }}
+          cache: maven
+
+      - name: Run MUnit tests
+        run: mvn -B -ntp test
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ github.run_id }}
+          path: |
+            ${{ inputs.project_path }}/target/munit-reports/**
+            ${{ inputs.project_path }}/target/surefire-reports/**
+          retention-days: 14
+          if-no-files-found: warn
+
+  version:
+    name: "3 Calculate version"
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.calc.outputs.version }}
+      kind: ${{ steps.calc.outputs.kind }}
+      group_id: ${{ steps.coords.outputs.group_id }}
+      artifact_id: ${{ steps.coords.outputs.artifact_id }}
+    steps:
+      - name: Check out application
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check out framework scripts
+        uses: actions/checkout@v4
+        with:
+          repository: nsripriya731/mulesoft-github-actions
+          ref: main
+          path: framework
+          persist-credentials: false
+
+      - name: Calculate version
+        id: calc
+        run: bash "${GITHUB_WORKSPACE}/framework/scripts/calculate-version.sh" pom.xml
+
+      - name: Read Maven coordinates
+        id: coords
+        run: |
+          python3 -I - <<'PY'
+          import os, xml.etree.ElementTree as ET
+          ns = {"m": "http://maven.apache.org/POM/4.0.0"}
+          pom = ET.parse("pom.xml").getroot()
+          group = pom.find("m:groupId", ns).text.strip()
+          artifact = pom.find("m:artifactId", ns).text.strip()
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"group_id={group}\nartifact_id={artifact}\n")
+          print(f"groupId={group} artifactId={artifact}")
+          PY
+
+  package:
+    name: "4 Package and verify artifact"
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      GROUP_ID: ${{ needs.version.outputs.group_id }}
+      ARTIFACT_ID: ${{ needs.version.outputs.artifact_id }}
+    steps:
+      - name: Check out application
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check out framework scripts
+        uses: actions/checkout@v4
+        with:
+          repository: nsripriya731/mulesoft-github-actions
+          ref: main
+          path: framework
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java_version }}
+          cache: maven
+
+      - name: Apply calculated version
+        run: mvn -B -ntp -q versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false
+
+      - name: Package Mule application
+        run: mvn -B -ntp package -DskipTests
+
+      - name: Verify packaged artifact
+        run: |
+          set -euo pipefail
+          jar=$(find target -maxdepth 1 -name "${ARTIFACT_ID}-${VERSION}-mule-application.jar")
+          if [[ -z "$jar" ]]; then
+            echo "::error::Expected target/${ARTIFACT_ID}-${VERSION}-mule-application.jar was not produced" >&2
+            ls -la target >&2
+            exit 1
+          fi
+          bash "${GITHUB_WORKSPACE}/framework/scripts/verify-artifact.sh" "$jar" "$GROUP_ID" "$ARTIFACT_ID" "$VERSION"
+          mkdir -p "${GITHUB_WORKSPACE}/artifact-out"
+          cp "$jar" "${jar}.sha256" "$(dirname "$jar")/build-metadata.json" "${GITHUB_WORKSPACE}/artifact-out/"
+
+      - name: Upload Mule application artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mule-app-${{ needs.version.outputs.artifact_id }}-${{ needs.version.outputs.version }}
+          path: ${{ github.workspace }}/artifact-out/*
+          retention-days: 14
+          if-no-files-found: error
+
+  publish:
+    name: "5 Publish to Exchange"
+    if: ${{ inputs.publish }}
+    needs: [version, package]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.deploy_environment }}
+    concurrency:
+      group: mule-publish-${{ github.repository }}
+      cancel-in-progress: false
+    env:
+      ANYPOINT_BASE_URI: ${{ vars.ANYPOINT_BASE_URI || 'https://anypoint.mulesoft.com' }}
+      ANYPOINT_ORG_ID: ${{ vars.ANYPOINT_ORG_ID }}
+      ANYPOINT_USERNAME: ${{ secrets.ANYPOINT_USERNAME }}
+      ANYPOINT_PASSWORD: ${{ secrets.ANYPOINT_PASSWORD }}
+      ANYPOINT_CLIENT_ID: ${{ secrets.ANYPOINT_CLIENT_ID }}
+      ANYPOINT_CLIENT_SECRET: ${{ secrets.ANYPOINT_CLIENT_SECRET }}
+      VERSION: ${{ needs.version.outputs.version }}
+      KIND: ${{ needs.version.outputs.kind }}
+      GROUP_ID: ${{ needs.version.outputs.group_id }}
+      ARTIFACT_ID: ${{ needs.version.outputs.artifact_id }}
+    outputs:
+      sha256: ${{ steps.verify.outputs.sha256 }}
+      newly_published: ${{ steps.exists.outputs.newly_published }}
+    steps:
+      - name: Check out application
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Check out framework scripts
+        uses: actions/checkout@v4
+        with:
+          repository: nsripriya731/mulesoft-github-actions
+          ref: main
+          path: framework
+          persist-credentials: false
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java_version }}
+          cache: maven
+
+      - name: Check Exchange for existing version
+        id: exists
+        run: |
+          set +e
+          bash "${GITHUB_WORKSPACE}/framework/scripts/exchange.sh" exists "$ANYPOINT_ORG_ID" "$ARTIFACT_ID" "$VERSION"
+          rc=$?
+          set -e
+          case "$rc" in
+            0)
+              if [[ "$KIND" == "release" ]]; then
+                echo "::error::Release ${ARTIFACT_ID}:${VERSION} already exists in Exchange. Release versions are immutable; bump the POM version and tag again." >&2
+                exit 1
+              fi
+              echo "Dev version already published; publication is skipped for this run."
+              echo "newly_published=false" >> "$GITHUB_OUTPUT" ;;
+            1)
+              echo "newly_published=true" >> "$GITHUB_OUTPUT" ;;
+            *)
+              exit 1 ;;
+          esac
+
+      - name: Verify POM group matches organization
+        if: ${{ steps.exists.outputs.newly_published == 'true' }}
+        run: |
+          if [[ "$GROUP_ID" != "$ANYPOINT_ORG_ID" ]]; then
+            echo "::error::POM groupId (${GROUP_ID}) must equal ANYPOINT_ORG_ID (${ANYPOINT_ORG_ID}) for Exchange publication." >&2
+            exit 1
+          fi
+
+      - name: Write Maven settings for Exchange
+        run: bash "${GITHUB_WORKSPACE}/framework/scripts/write-maven-settings.sh" Repository
+
+      - name: Apply calculated version
+        if: ${{ steps.exists.outputs.newly_published == 'true' }}
+        working-directory: ${{ inputs.project_path }}
+        run: mvn -B -ntp -q versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false
+
+      - name: Publish to Exchange
+        if: ${{ steps.exists.outputs.newly_published == 'true' }}
+        working-directory: ${{ inputs.project_path }}
+        run: mvn -B -ntp deploy -DskipTests
+
+      - name: Verify published asset
+        id: verify
+        run: |
+          set -euo pipefail
+          sha=$(bash "${GITHUB_WORKSPACE}/framework/scripts/exchange.sh" download "$ANYPOINT_ORG_ID" "$ARTIFACT_ID" "$VERSION" "${RUNNER_TEMP}/exchange")
+          echo "Exchange holds ${ARTIFACT_ID}:${VERSION} with SHA-256 ${sha}"
+          echo "sha256=${sha}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Exchange publication"
+            echo "- Asset: \`${GROUP_ID}:${ARTIFACT_ID}:${VERSION}\` (classifier mule-application)"
+            echo "- Newly published: ${{ steps.exists.outputs.newly_published }}"
+            echo "- SHA-256 (Exchange copy): \`${sha}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  deploy:
+    name: "6 Deploy and verify"
+    if: ${{ inputs.deploy }}
+    needs: [version, publish]
+    uses: nsripriya731/mulesoft-github-actions/.github/workflows/reusable-mule-deploy.yml@main
+    with:
+      environment: ${{ inputs.deploy_environment }}
+      artifact_id: ${{ needs.version.outputs.artifact_id }}
+      version: ${{ needs.version.outputs.version }}
+      expected_sha256: ${{ needs.publish.outputs.sha256 }}
+    secrets: inherit
