@@ -127,12 +127,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - name: Set up Java and Maven
+        uses: nsripriya731/mulesoft-github-actions/.github/actions/setup-mule-build@main
         with:
-          distribution: temurin
-          java-version: ${{ inputs.java_version }}
-          cache: maven
+          java_version: ${{ inputs.java_version }}
 
       - name: Run MUnit tests
         run: mvn -B -ntp test
@@ -213,12 +211,10 @@ jobs:
           path: framework
           persist-credentials: false
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - name: Set up Java and Maven
+        uses: nsripriya731/mulesoft-github-actions/.github/actions/setup-mule-build@main
         with:
-          distribution: temurin
-          java-version: ${{ inputs.java_version }}
-          cache: maven
+          java_version: ${{ inputs.java_version }}
 
       - name: Apply calculated version
         run: mvn -B -ntp -q versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false
@@ -285,12 +281,10 @@ jobs:
           path: framework
           persist-credentials: false
 
-      - name: Set up Java
-        uses: actions/setup-java@v4
+      - name: Set up Java and Maven
+        uses: nsripriya731/mulesoft-github-actions/.github/actions/setup-mule-build@main
         with:
-          distribution: temurin
-          java-version: ${{ inputs.java_version }}
-          cache: maven
+          java_version: ${{ inputs.java_version }}
 
       - name: Check Exchange for existing version
         id: exists
