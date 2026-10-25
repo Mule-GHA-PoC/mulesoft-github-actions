@@ -9,16 +9,13 @@ name: Reusable Mule CI
 # leave both false and pass no secrets, so PR code can never reach Anypoint.
 #
 # Caller contract (see README.md for an example):
-#   with:  publish, deploy, deploy_environment, project_path
+#   with:  publish, deploy, deploy_environment
+#   The Mule project must be at the repository root (pom.xml, mule-artifact.json, src/main/mule).
 #   secrets: inherit   (only from trusted push events; never from pull requests)
 
 on:
   workflow_call:
     inputs:
-      project_path:
-        description: Directory that contains the Mule project pom.xml
-        type: string
-        default: "."
       java_version:
         description: Java version used to build (Mule 4.10 supports 17)
         type: string
@@ -47,10 +44,6 @@ on:
 
 permissions:
   contents: read
-
-defaults:
-  run:
-    working-directory: ${{ inputs.project_path }}
 
 jobs:
   validate:
@@ -90,7 +83,7 @@ jobs:
           set -euo pipefail
           for path in pom.xml mule-artifact.json src/main/mule; do
             if [[ ! -e "$path" ]]; then
-              echo "::error::Missing ${path} in ${{ inputs.project_path }}" >&2
+              echo "::error::Missing ${path} at the repository root" >&2
               exit 1
             fi
           done
@@ -150,8 +143,8 @@ jobs:
         with:
           name: test-reports-${{ github.run_id }}
           path: |
-            ${{ inputs.project_path }}/target/munit-reports/**
-            ${{ inputs.project_path }}/target/surefire-reports/**
+            target/munit-reports/**
+            target/surefire-reports/**
           retention-days: 14
           if-no-files-found: warn
 
@@ -333,12 +326,10 @@ jobs:
 
       - name: Apply calculated version
         if: ${{ steps.exists.outputs.newly_published == 'true' }}
-        working-directory: ${{ inputs.project_path }}
         run: mvn -B -ntp -q versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false
 
       - name: Publish to Exchange
         if: ${{ steps.exists.outputs.newly_published == 'true' }}
-        working-directory: ${{ inputs.project_path }}
         run: mvn -B -ntp deploy -DskipTests
 
       - name: Verify published asset
