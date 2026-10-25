@@ -8,8 +8,8 @@
 #
 # Requires ANYPOINT_BASE_URI-independent Exchange host (https://maven.anypoint.mulesoft.com) for the
 # standard cloud; set EXCHANGE_MAVEN_HOST for other control planes (e.g. maven.eu1.anypoint.mulesoft.com).
-# Credentials come from the environment (ANYPOINT_CLIENT_ID/SECRET or ANYPOINT_USERNAME/PASSWORD)
-# and are passed to curl via a config read from stdin, so they never appear in process arguments.
+# Credentials come from ANYPOINT_USERNAME/ANYPOINT_PASSWORD and are passed to curl via a config
+# read from stdin, so they never appear in process arguments.
 set -euo pipefail
 
 action="${1:?usage: exchange.sh <exists|download> ...}"
@@ -17,14 +17,8 @@ org_id="${2:?org id required}"
 artifact_id="${3:?artifact id required}"
 version="${4:?version required}"
 host="${EXCHANGE_MAVEN_HOST:-maven.anypoint.mulesoft.com}"
-
-if [[ -n "${ANYPOINT_CLIENT_ID:-}" && -n "${ANYPOINT_CLIENT_SECRET:-}" ]]; then
-  auth_user="~~~Client~~~"
-  auth_pass="${ANYPOINT_CLIENT_ID}~?~${ANYPOINT_CLIENT_SECRET}"
-else
-  auth_user="${ANYPOINT_USERNAME:?credentials required}"
-  auth_pass="${ANYPOINT_PASSWORD:?credentials required}"
-fi
+auth_user="${ANYPOINT_USERNAME:?credentials required}"
+auth_pass="${ANYPOINT_PASSWORD:?credentials required}"
 
 base="https://${host}/api/v3/organizations/${org_id}/maven/${org_id}/${artifact_id}/${version}"
 jar_name="${artifact_id}-${version}-mule-application.jar"

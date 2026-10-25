@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Deploy-only POM for CloudHub 2.0. The application is never compiled here: the published
+     JAR is downloaded to framework/deploy/target/ and `mvn mule:deploy` uploads it.
+     Pass -Dapp.artifact.id=<artifactId> -Dapp.version=<version> -Dapp.group.id=<organization id>.
+     Target settings and credentials come from environment variables. -->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>${app.group.id}</groupId>
+  <artifactId>${app.artifact.id}</artifactId>
+  <version>${app.version}</version>
+  <packaging>mule-application</packaging>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.mule.tools.maven</groupId>
+        <artifactId>mule-maven-plugin</artifactId>
+        <version>4.10.3</version>
+        <extensions>true</extensions>
+        <configuration>
+          <classifier>mule-application</classifier>
+          <cloudhub2Deployment>
+            <uri>${env.ANYPOINT_BASE_URI}</uri>
+            <provider>MC</provider>
+            <environment>${env.ANYPOINT_ENVIRONMENT}</environment>
+            <target>${env.ANYPOINT_DEPLOYMENT_TARGET}</target>
+            <applicationName>${env.MULE_APPLICATION_NAME}</applicationName>
+            <muleVersion>${env.MULE_RUNTIME_VERSION}</muleVersion>
+            <releaseChannel>${env.MULE_RELEASE_CHANNEL}</releaseChannel>
+            <javaVersion>${env.MULE_JAVA_VERSION}</javaVersion>
+            <vCores>${env.MULE_VCORES}</vCores>
+            <replicas>${env.MULE_REPLICAS}</replicas>
+            <businessGroupId>${env.ANYPOINT_BUSINESS_GROUP_ID}</businessGroupId>
+            <username>${env.ANYPOINT_USERNAME}</username>
+            <password>${env.ANYPOINT_PASSWORD}</password>
+          </cloudhub2Deployment>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

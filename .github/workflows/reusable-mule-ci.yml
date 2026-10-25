@@ -37,10 +37,6 @@ on:
         required: false
       ANYPOINT_PASSWORD:
         required: false
-      ANYPOINT_CLIENT_ID:
-        required: false
-      ANYPOINT_CLIENT_SECRET:
-        required: false
 
 permissions:
   contents: read
@@ -55,8 +51,6 @@ jobs:
       ANYPOINT_ORG_ID: ${{ vars.ANYPOINT_ORG_ID }}
       ANYPOINT_USERNAME: ${{ secrets.ANYPOINT_USERNAME }}
       ANYPOINT_PASSWORD: ${{ secrets.ANYPOINT_PASSWORD }}
-      ANYPOINT_CLIENT_ID: ${{ secrets.ANYPOINT_CLIENT_ID }}
-      ANYPOINT_CLIENT_SECRET: ${{ secrets.ANYPOINT_CLIENT_SECRET }}
     steps:
       - name: Check out application
         uses: actions/checkout@v4
@@ -258,8 +252,6 @@ jobs:
       ANYPOINT_ORG_ID: ${{ vars.ANYPOINT_ORG_ID }}
       ANYPOINT_USERNAME: ${{ secrets.ANYPOINT_USERNAME }}
       ANYPOINT_PASSWORD: ${{ secrets.ANYPOINT_PASSWORD }}
-      ANYPOINT_CLIENT_ID: ${{ secrets.ANYPOINT_CLIENT_ID }}
-      ANYPOINT_CLIENT_SECRET: ${{ secrets.ANYPOINT_CLIENT_SECRET }}
       VERSION: ${{ needs.version.outputs.version }}
       KIND: ${{ needs.version.outputs.kind }}
       GROUP_ID: ${{ needs.version.outputs.group_id }}
@@ -315,16 +307,13 @@ jobs:
             exit 1
           fi
 
-      - name: Write Maven settings for Exchange
-        run: bash "${GITHUB_WORKSPACE}/framework/scripts/write-maven-settings.sh" Repository
-
       - name: Apply calculated version
         if: ${{ steps.exists.outputs.newly_published == 'true' }}
         run: mvn -B -ntp -q versions:set -DnewVersion="$VERSION" -DgenerateBackupPoms=false
 
       - name: Publish to Exchange
         if: ${{ steps.exists.outputs.newly_published == 'true' }}
-        run: mvn -B -ntp deploy -DskipTests
+        run: mvn -B -ntp -s "${GITHUB_WORKSPACE}/framework/settings/exchange-settings.xml" deploy -DskipTests
 
       - name: Verify published asset
         id: verify

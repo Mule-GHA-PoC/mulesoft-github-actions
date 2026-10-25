@@ -35,13 +35,8 @@ case "$mode" in
     require ANYPOINT_ORG_ID
     check_pattern ANYPOINT_ORG_ID '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' "expected a UUID"
     check_pattern ANYPOINT_BASE_URI '^https://[A-Za-z0-9.-]+$' "expected https://host without a path"
-    if [[ -n "${ANYPOINT_CLIENT_ID:-}" || -n "${ANYPOINT_CLIENT_SECRET:-}" ]]; then
-      require ANYPOINT_CLIENT_ID
-      require ANYPOINT_CLIENT_SECRET
-    else
-      require ANYPOINT_USERNAME
-      require ANYPOINT_PASSWORD
-    fi
+    require ANYPOINT_USERNAME
+    require ANYPOINT_PASSWORD
     ;;
   *)
     fail "Unknown mode '${mode}'. Use ci, publish or deploy."

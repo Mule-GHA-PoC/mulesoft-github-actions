@@ -3,8 +3,7 @@
 # Runtime Manager is the authoritative source; a successful `mvn mule:deploy` alone is not enough.
 #
 # Usage: verify-deployment.sh <org_id> <environment_name> <application_name> <timeout_seconds>
-# Credentials come from ANYPOINT_CLIENT_ID/SECRET or ANYPOINT_USERNAME/PASSWORD and are sent to
-# curl through stdin config, never as process arguments. Writes a sanitized summary to
+# Credentials come from ANYPOINT_USERNAME/ANYPOINT_PASSWORD. Writes a summary to
 # $GITHUB_STEP_SUMMARY when set.
 set -euo pipefail
 
@@ -19,21 +18,12 @@ api_post_json() { # url, json body -> stdout
     --data-binary "$2" "$1"
 }
 
-if [[ -n "${ANYPOINT_CLIENT_ID:-}" && -n "${ANYPOINT_CLIENT_SECRET:-}" ]]; then
-  token=$(curl --silent --show-error --fail-with-body \
-    --data-urlencode 'grant_type=client_credentials' \
-    --data-urlencode "client_id=${ANYPOINT_CLIENT_ID}" \
-    --data-urlencode "client_secret=${ANYPOINT_CLIENT_SECRET}" \
-    "${base}/accounts/api/v2/oauth2/token" \
-    | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
-else
-  login_body=$(python3 -I -c '
+login_body=$(python3 -I -c '
 import json, os
 print(json.dumps({"username": os.environ["ANYPOINT_USERNAME"], "password": os.environ["ANYPOINT_PASSWORD"]}))
 ')
-  token=$(api_post_json "${base}/accounts/login" "$login_body" \
-    | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
-fi
+token=$(api_post_json "${base}/accounts/login" "$login_body" \
+  | python3 -I -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
 
 auth_config() { printf 'header = "Authorization: Bearer %s"\n' "$token"; }
 

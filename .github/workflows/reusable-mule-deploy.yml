@@ -2,7 +2,7 @@ name: Reusable Mule deploy
 
 # Deploys one published Mule application version to CloudHub 2.0.
 # It never compiles or repackages: it downloads the immutable Exchange artifact, verifies its
-# SHA-256 against the expected value, and runs `mvn mule:deploy` with a deploy-only POM.
+# SHA-256 against the expected value, and runs `mvn mule:deploy` with the static deploy/pom.xml.
 #
 # Called from reusable-mule-ci.yml (sandbox auto-deploy) and mule-cd.yml (manual promotion).
 #
@@ -15,7 +15,7 @@ name: Reusable Mule deploy
 #
 # Required environment variables (see docs/github-configuration.md):
 #   ANYPOINT_ORG_ID, ANYPOINT_ENVIRONMENT, ANYPOINT_DEPLOYMENT_TARGET, MULE_RUNTIME_VERSION
-#   plus credentials (secrets) for either connected app or username/password.
+#   and the ANYPOINT_USERNAME / ANYPOINT_PASSWORD secrets (org level).
 
 on:
   workflow_call:
@@ -41,10 +41,6 @@ on:
         required: false
       ANYPOINT_PASSWORD:
         required: false
-      ANYPOINT_CLIENT_ID:
-        required: false
-      ANYPOINT_CLIENT_SECRET:
-        required: false
 
 permissions:
   contents: read
@@ -66,16 +62,13 @@ jobs:
       ANYPOINT_DEPLOYMENT_TARGET: ${{ vars.ANYPOINT_DEPLOYMENT_TARGET }}
       MULE_APPLICATION_NAME: ${{ vars.MULE_APPLICATION_NAME || inputs.artifact_id }}
       MULE_RUNTIME_VERSION: ${{ vars.MULE_RUNTIME_VERSION }}
-      MULE_RELEASE_CHANNEL: ${{ vars.MULE_RELEASE_CHANNEL || 'LTS' }}
+      MULE_RELEASE_CHANNEL: ${{ vars.MULE_RELEASE_CHANNEL || 'EDGE' }}
       MULE_JAVA_VERSION: ${{ vars.MULE_JAVA_VERSION || '17' }}
       MULE_VCORES: ${{ vars.MULE_VCORES || '0.1' }}
       MULE_REPLICAS: ${{ vars.MULE_REPLICAS || '1' }}
       MULE_DEPLOYMENT_TIMEOUT: ${{ vars.MULE_DEPLOYMENT_TIMEOUT || '900' }}
-      MULE_MAVEN_PLUGIN_VERSION: ${{ vars.MULE_MAVEN_PLUGIN_VERSION || '4.10.3' }}
       ANYPOINT_USERNAME: ${{ secrets.ANYPOINT_USERNAME }}
       ANYPOINT_PASSWORD: ${{ secrets.ANYPOINT_PASSWORD }}
-      ANYPOINT_CLIENT_ID: ${{ secrets.ANYPOINT_CLIENT_ID }}
-      ANYPOINT_CLIENT_SECRET: ${{ secrets.ANYPOINT_CLIENT_SECRET }}
       ARTIFACT_ID: ${{ inputs.artifact_id }}
       ARTIFACT_VERSION: ${{ inputs.version }}
       EXPECTED_SHA256: ${{ inputs.expected_sha256 }}
@@ -94,34 +87,26 @@ jobs:
       - name: Validate deployment configuration
         run: bash framework/scripts/validate-config.sh deploy
 
-      - name: Select authentication mode
-        id: auth
-        run: |
-          if [[ -n "$ANYPOINT_CLIENT_ID" && -n "$ANYPOINT_CLIENT_SECRET" ]]; then
-            echo "mode=connected-app" >> "$GITHUB_OUTPUT"
-          else
-            echo "mode=username-password" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Download published artifact from Exchange and verify SHA-256
         run: |
-          mkdir -p deploy/target
-          actual=$(bash framework/scripts/exchange.sh download "$ANYPOINT_ORG_ID" "$ARTIFACT_ID" "$ARTIFACT_VERSION" deploy/target)
+          mkdir -p framework/deploy/target
+          actual=$(bash framework/scripts/exchange.sh download "$ANYPOINT_ORG_ID" "$ARTIFACT_ID" "$ARTIFACT_VERSION" framework/deploy/target)
           if [[ "$actual" != "$EXPECTED_SHA256" ]]; then
             echo "::error::SHA-256 mismatch for ${ARTIFACT_ID}:${ARTIFACT_VERSION}. Expected ${EXPECTED_SHA256}, Exchange returned ${actual}." >&2
             exit 1
           fi
           echo "Exchange artifact matches expected SHA-256 ${actual}"
           bash framework/scripts/verify-artifact.sh \
-            "deploy/target/${ARTIFACT_ID}-${ARTIFACT_VERSION}-mule-application.jar" \
+            "framework/deploy/target/${ARTIFACT_ID}-${ARTIFACT_VERSION}-mule-application.jar" \
             "$ANYPOINT_ORG_ID" "$ARTIFACT_ID" "$ARTIFACT_VERSION"
 
-      - name: Generate deploy-only POM
-        run: |
-          bash framework/scripts/write-deploy-pom.sh deploy "$ANYPOINT_ORG_ID" "$ARTIFACT_ID" "$ARTIFACT_VERSION" "${{ steps.auth.outputs.mode }}"
-
       - name: Deploy to CloudHub 2.0 without rebuilding
-        run: mvn -B -ntp -f deploy/pom.xml mule:deploy
+        run: |
+          mvn -B -ntp -f framework/deploy/pom.xml \
+            -Dapp.group.id="$ANYPOINT_ORG_ID" \
+            -Dapp.artifact.id="$ARTIFACT_ID" \
+            -Dapp.version="$ARTIFACT_VERSION" \
+            mule:deploy
 
       - name: Verify deployment in Runtime Manager
         run: |
@@ -130,7 +115,7 @@ jobs:
 
       - name: Record deployment metadata
         run: |
-          cat > deploy/target/deployment-metadata.json <<EOF
+          cat > framework/deploy/target/deployment-metadata.json <<EOF
           {
             "artifactId": "${ARTIFACT_ID}",
             "version": "${ARTIFACT_VERSION}",
@@ -149,6 +134,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: deployment-${{ inputs.environment }}-${{ inputs.artifact_id }}-${{ inputs.version }}
-          path: deploy/target/deployment-metadata.json
+          path: framework/deploy/target/deployment-metadata.json
           retention-days: 30
           if-no-files-found: error
