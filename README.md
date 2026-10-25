@@ -1,32 +1,42 @@
 # MuleSoft GitHub Actions framework
 
-One reusable workflow, `.github/workflows/mule-pipeline.yml`, builds, publishes and deploys Mule 4
-applications. The caller's event decides which stages run:
+One reusable workflow, `.github/workflows/mule-pipeline.yml`, builds, publishes, releases and deploys
+Mule 4 applications. Each stage is a job; the caller's event enables it or shows it as skipped.
 
-| Trigger | Unit tests | Package | Publish to Exchange | Deploy |
-|---|---|---|---|---|
-| Pull request | yes | yes | - | - |
-| Merge to `develop` | yes | yes | `X.Y.Z-dev.<run number>` | Sandbox (automatic) |
-| Merge to `main` | yes | yes | `X.Y.Z` (release) | - |
-| Manual run (CD) | - | - | - | chosen environment, from Exchange |
+| Trigger | Unit test | Package | Publish | Deploy Sandbox | Release |
+|---|---|---|---|---|---|
+| Pull request | yes | yes | - | - | - |
+| Merge to `develop` | yes | yes | yes (SNAPSHOT) | yes | - |
+| Merge to `main` | yes | - | - | - | yes |
+| Manual run (CD) | - | - | - | - | - |
 
-## Versions
+A manual run only deploys: a published Exchange version to the chosen environment, with no build.
 
-The base version is the POM `<version>` without `-SNAPSHOT`.
+## Versions and release
 
-- `develop`: `<base>-dev.<GitHub run number>`, for example `1.0.0-dev.57`. Unique per run.
-- `main`: `<base>` exactly. Exchange versions are immutable, so bump the POM version before merging
-  to `main`; publishing an existing version fails.
+The POM holds `X.Y.Z-SNAPSHOT`.
 
-The version is set in the build only (`versions:set`); the POM in the repository is not changed.
+- **`develop`** publishes that SNAPSHOT to Exchange (Exchange accepts a republished SNAPSHOT) and deploys it.
+- **`main`** runs `maven-release-plugin` `prepare` and `perform`: it publishes `X.Y.Z` to Exchange, tags
+  `vX.Y.Z`, and commits the next `X.Y.(Z+1)-SNAPSHOT` to `main`. The Release stage then merges `main` back
+  into `develop` so both branches carry the next version. Release commits are authored by `github-actions[bot]`.
+
+The release pushes directly to `main`, so `main` must not require pull requests for the Actions bot.
+The back-merge conflicts only if the POM version line was edited on `develop` in the meantime.
 
 ## Use it in an application repository
 
-Copy `pipeline.yml` from the sample app (`mulesoft-github-actions-ci-smoke-test`). It calls this
-workflow with `secrets: inherit`. The POM needs the Exchange repository and the same id in
+Copy `pipeline.yml` from the sample app (`mulesoft-github-actions-ci-smoke-test`). It calls this workflow
+with `secrets: inherit` and `contents: write` (the Release stage needs it). The POM needs the SNAPSHOT
+version, an `scm` block for the release plugin, and the Exchange repository with the same id in
 `distributionManagement`, so one credential entry covers resolve and publish:
 
 ```xml
+<scm>
+  <connection>scm:git:https://github.com/<org>/<repo>.git</connection>
+  <developerConnection>scm:git:https://github.com/<org>/<repo>.git</developerConnection>
+  <tag>HEAD</tag>
+</scm>
 <repositories>
   <repository>
     <id>anypoint-exchange-v3</id>
@@ -67,4 +77,4 @@ environment's protection rules gate the deployment.
 
 `scripts/deploy.sh` calls the Runtime Manager API: it creates the deployment, or updates the one with
 the same application name, pointing it at the published Exchange asset, then waits until Runtime
-Manager reports that version as running. Manual deployments use the same script.
+Manager reports that version as running. Automatic and manual deployments use the same script.
