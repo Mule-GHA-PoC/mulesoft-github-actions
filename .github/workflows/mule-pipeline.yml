@@ -1,12 +1,17 @@
 name: Mule pipeline
 
-# One reusable workflow for every trigger. The caller's event decides which stages run, like
-# skipped stages in Jenkins:
+# One reusable workflow for every trigger. Each stage is a job; the caller's event decides which
+# stages run and the rest are shown as skipped, like skipped stages in Jenkins:
 #
-#   pull_request       build: unit tests, package
-#   push to develop    build: unit tests, package, publish X.Y.Z-dev.<run> to Exchange; deploy to Sandbox
-#   push to main       build: unit tests, package, publish release X.Y.Z to Exchange; no deploy
-#   workflow_dispatch  deploy only: an already published version to the chosen environment (CD)
+#                      Unit test  Package  Publish  Deploy Sandbox  Release
+#   pull request          yes       yes
+#   merge to develop      yes       yes      yes        yes
+#   merge to main         yes                                          yes
+#   manual run (CD)       deploys a published version to the chosen environment only
+#
+# Versions: the POM holds X.Y.Z-SNAPSHOT. develop publishes and deploys that snapshot. A merge to
+# main runs maven-release-plugin prepare + perform: it publishes X.Y.Z to Exchange, tags vX.Y.Z,
+# pushes the next X.Y.(Z+1)-SNAPSHOT to main and merges main back into develop.
 #
 # Config (org or repo level): variables ANYPOINT_ORG_ID, ANYPOINT_ENVIRONMENT,
 # ANYPOINT_DEPLOYMENT_TARGET, MULE_RUNTIME_VERSION and secrets ANYPOINT_USERNAME, ANYPOINT_PASSWORD.
@@ -33,67 +38,46 @@ permissions:
   contents: read
 
 jobs:
-  build:
+  test:
+    name: Unit test
     if: ${{ github.event_name != 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup@main
+      - run: mvn -B -ntp test
+
+  package:
+    name: Package
+    needs: test
+    if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/develop' }}
     runs-on: ubuntu-latest
     outputs:
       artifact_id: ${{ steps.project.outputs.artifact_id }}
       version: ${{ steps.project.outputs.version }}
+    steps:
+      - uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup@main
+      - run: mvn -B -ntp package -DskipTests
+      - id: project
+        run: |
+          echo "version=$(mvn -q -ntp help:evaluate -Dexpression=project.version -DforceStdout)" >> "$GITHUB_OUTPUT"
+          echo "artifact_id=$(mvn -q -ntp help:evaluate -Dexpression=project.artifactId -DforceStdout)" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish to Exchange
+    needs: package
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}
+    runs-on: ubuntu-latest
     env:
       ANYPOINT_USERNAME: ${{ secrets.ANYPOINT_USERNAME }}
       ANYPOINT_PASSWORD: ${{ secrets.ANYPOINT_PASSWORD }}
     steps:
-      - uses: actions/checkout@v4
-
-      # server-id must match the repository ids in the POM; credentials are read from the env above.
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-          cache: maven
-          server-id: anypoint-exchange-v3
-          server-username: ANYPOINT_USERNAME
-          server-password: ANYPOINT_PASSWORD
-
-      # The Mule Maven Plugin needs a specific Maven release; the runner's bundled one breaks it.
-      - name: Install Maven 3.9.16
-        run: |
-          curl -fsSL -o "$RUNNER_TEMP/maven.tgz" https://archive.apache.org/dist/maven/maven-3/3.9.16/binaries/apache-maven-3.9.16-bin.tar.gz
-          echo "831a8591fe20c8243b1dbe7d71e3244f31d1665b0804b2e825e38cbbe5ce0cafb8338851f90780735568773e0a6cd07bbec107cda0b896b008b861075358b6f6  $RUNNER_TEMP/maven.tgz" | sha512sum --check --status
-          tar -xzf "$RUNNER_TEMP/maven.tgz" -C "$RUNNER_TEMP"
-          echo "$RUNNER_TEMP/apache-maven-3.9.16/bin" >> "$GITHUB_PATH"
-
-      # develop -> X.Y.Z-dev.<run number>; main -> X.Y.Z exactly as in the POM (a release; Exchange
-      # versions are immutable, so bump the POM version before merging to main).
-      - name: Set version
-        id: project
-        run: |
-          base=$(mvn -q -ntp help:evaluate -Dexpression=project.version -DforceStdout | sed 's/-SNAPSHOT$//')
-          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == "refs/heads/main" ]]; then
-            version="$base"
-          else
-            version="${base}-dev.${GITHUB_RUN_NUMBER}"
-          fi
-          mvn -q -ntp versions:set -DnewVersion="$version" -DgenerateBackupPoms=false
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "artifact_id=$(mvn -q -ntp help:evaluate -Dexpression=project.artifactId -DforceStdout)" >> "$GITHUB_OUTPUT"
-          echo "Version: $version"
-
-      - name: Unit tests
-        run: mvn -B -ntp test
-
-      - name: Package
-        run: mvn -B -ntp package -DskipTests
-
-      - name: Publish to Exchange
-        if: ${{ github.event_name == 'push' }}
-        run: mvn -B -ntp deploy -DskipTests
+      - uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup@main
+      - run: mvn -B -ntp deploy -DskipTests
 
   deploy:
-    needs: build
-    if: >-
-      ${{ !cancelled() && (github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && github.ref == 'refs/heads/develop' && needs.build.result == 'success')) }}
+    name: Deploy ${{ inputs.environment || 'Sandbox' }}
+    needs: [package, publish]
+    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.publish.result == 'success') }}
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment || 'Sandbox' }}
     concurrency:
@@ -112,13 +96,45 @@ jobs:
       MULE_APPLICATION_NAME: ${{ vars.MULE_APPLICATION_NAME }}
       ANYPOINT_USERNAME: ${{ secrets.ANYPOINT_USERNAME }}
       ANYPOINT_PASSWORD: ${{ secrets.ANYPOINT_PASSWORD }}
-      ARTIFACT_ID: ${{ inputs.artifact_id || needs.build.outputs.artifact_id }}
-      VERSION: ${{ inputs.version || needs.build.outputs.version }}
+      ARTIFACT_ID: ${{ inputs.artifact_id || needs.package.outputs.artifact_id }}
+      VERSION: ${{ inputs.version || needs.package.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
           repository: Mule-GHA-PoC/mulesoft-github-actions
           path: framework
+      - run: bash framework/scripts/deploy.sh
 
-      - name: Deploy to CloudHub 2.0
-        run: bash framework/scripts/deploy.sh
+  release:
+    name: Release
+    needs: test
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      ANYPOINT_USERNAME: ${{ secrets.ANYPOINT_USERNAME }}
+      ANYPOINT_PASSWORD: ${{ secrets.ANYPOINT_PASSWORD }}
+    steps:
+      - uses: Mule-GHA-PoC/mulesoft-github-actions/.github/actions/setup@main
+        with:
+          fetch-depth: 0
+
+      - name: Prepare and perform release
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          mvn -B -ntp \
+            org.apache.maven.plugins:maven-release-plugin:3.1.1:prepare \
+            org.apache.maven.plugins:maven-release-plugin:3.1.1:perform \
+            -DtagNameFormat='v@{project.version}' \
+            -DlocalCheckout=true \
+            -DpreparationGoals='clean verify -DskipTests' \
+            -Darguments=-DskipTests
+
+      - name: Merge main back into develop
+        run: |
+          git fetch origin develop
+          git checkout develop
+          git merge --no-ff origin/main -m "Merge main into develop after release"
+          git push origin develop
