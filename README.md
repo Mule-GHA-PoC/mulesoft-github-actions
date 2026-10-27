@@ -5,10 +5,14 @@ Mule 4 applications. Each stage is a job; the caller's event enables it or shows
 
 | Trigger | Unit test | Package | Publish | Deploy Sandbox | Release |
 |---|---|---|---|---|---|
-| Pull request | yes | yes | - | - | - |
+| Pull request to `develop` | yes | yes | - | - | - |
 | Merge to `develop` | yes | yes | yes (SNAPSHOT) | yes | - |
 | Merge to `main` | yes | - | - | - | yes |
 | Manual run (CD) | - | - | - | - | - |
+
+Checks belong to a commit, so a pull request from `develop` to `main` already shows the results of the
+merge to `develop` (its head commit) and nothing runs again. Pull requests into `main` from other branches
+are not covered.
 
 A manual run only deploys: a published Exchange version to the chosen environment, with no build.
 
